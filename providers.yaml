@@ -1,0 +1,181 @@
+providers:
+  - name: github-pages
+    enabled: true
+    class: strong-signal
+    detection_mode: txt-protection
+    confidence: high
+    severity: medium
+    manual_validation_required: false
+    tags: [dns, github, pages, sto]
+    match:
+      dns_record: cname
+      target_suffixes:
+        - github.io
+    extraction:
+      type: label_before_suffix
+      suffix: github.io
+    verification:
+      method: txt_exists
+      txt_templates:
+        - "_github-pages-challenge-{{owner}}.{{host}}"
+        - "_github-pages-challenge-{{owner}}.{{parent}}"
+      inheritance:
+        enabled: true
+        max_parent_levels: 1
+      protected_if_any_txt_exists: true
+    notes: "GitHub Pages protection is based on _github-pages-challenge TXT records; parent verification can protect immediate subdomains."
+
+  - name: azure-app-service
+    enabled: true
+    class: strong-signal
+    detection_mode: txt-protection
+    confidence: high
+    severity: medium
+    manual_validation_required: false
+    tags: [dns, azure, appservice, sto]
+    match:
+      dns_record: cname
+      target_suffixes:
+        - azurewebsites.net
+        - trafficmanager.net
+        - cloudapp.net
+    extraction:
+      type: none
+    verification:
+      method: txt_exists
+      txt_templates:
+        - "asuid.{{host}}"
+      inheritance:
+        enabled: false
+        max_parent_levels: 0
+      protected_if_any_txt_exists: true
+    notes: "Azure App Service commonly uses asuid.<host> TXT to prevent hostile validation of custom domains by another Azure tenant or subscription."
+
+  - name: aws-s3-website
+    enabled: true
+    class: legacy-dangling
+    detection_mode: claimable-target
+    confidence: medium
+    severity: medium
+    manual_validation_required: true
+    tags: [dns, aws, s3, sto, legacy]
+    match:
+      dns_record: cname
+      target_suffix_regexes:
+        - '(^|\.)s3-website[.-][a-z0-9-]+\.amazonaws\.com\.?$'
+        - '(^|\.)s3-website\.[a-z0-9-]+\.amazonaws\.com\.?$'
+        - '(^|\.)s3\.[a-z0-9-]+\.amazonaws\.com\.?$'
+    extraction:
+      type: none
+    dangling:
+      method: dns-target-pattern-only
+      classify_as: likely-dangling-s3
+    notes: "Legacy S3 custom-domain takeover logic is based on bucket-domain naming and dangling target patterns, not TXT protection."
+
+  - name: netlify
+    enabled: true
+    class: heuristic
+    detection_mode: platform-heuristic
+    confidence: low
+    severity: info
+    manual_validation_required: true
+    tags: [dns, netlify, sto, heuristic]
+    match:
+      dns_record: cname
+      target_suffixes:
+        - netlify.app
+    extraction:
+      type: none
+    heuristic:
+      method: provider-target-only
+      classify_as: netlify-manual-validation
+    notes: "Netlify should not be treated as deterministically vulnerable based on DNS alone; emit low-confidence findings for manual validation only."
+
+  - name: aws-route53-delegation
+    enabled: true
+    class: legacy-dangling
+    detection_mode: orphaned-delegation
+    confidence: medium
+    severity: high
+    manual_validation_required: true
+    tags: [dns, ns, delegation, aws, route53, sto]
+    match:
+      dns_record: ns
+      ns_regexes:
+        - '(^|\.)ns-[0-9]+\.awsdns-[0-9]+\.(com|net|org)\.?$'
+        - '(^|\.)ns-[0-9]+\.awsdns-[0-9]+\.co\.uk\.?$'
+    extraction:
+      type: none
+    delegation:
+      method: parent-delegation-with-missing-zone
+      classify_as: likely-orphaned-route53-delegation
+      require_parent_ns_delegation: true
+      require_authoritative_soa: true
+      authoritative_rcodes:
+        - nxdomain
+        - servfail
+        - refused
+        - noerror
+      direct_ns_validation: true
+      max_parent_walk: 2
+    notes: "Route 53 documents dangling delegation risks when NS records point at Route 53 nameservers without a corresponding active hosted zone or delegation set."
+
+  - name: azure-dns-delegation
+    enabled: true
+    class: legacy-dangling
+    detection_mode: orphaned-delegation
+    confidence: medium
+    severity: high
+    manual_validation_required: true
+    tags: [dns, ns, delegation, azure, sto]
+    match:
+      dns_record: ns
+      ns_suffixes:
+        - azure-dns.com
+        - azure-dns.net
+        - azure-dns.org
+        - azure-dns.info
+    extraction:
+      type: none
+    delegation:
+      method: parent-delegation-with-missing-zone
+      classify_as: likely-orphaned-azure-dns-delegation
+      require_parent_ns_delegation: true
+      require_authoritative_soa: true
+      authoritative_rcodes:
+        - nxdomain
+        - servfail
+        - refused
+        - noerror
+      direct_ns_validation: true
+      max_parent_walk: 2
+    notes: "Azure DNS allows the same zone name to exist in different resource groups or subscriptions and does not require ownership of the domain name to create the zone, so orphaned delegations should be treated as manual-validation candidates."
+
+  - name: cloudflare-delegation
+    enabled: true
+    class: legacy-dangling
+    detection_mode: orphaned-delegation
+    confidence: medium
+    severity: high
+    manual_validation_required: true
+    tags: [dns, ns, delegation, cloudflare, sto]
+    match:
+      dns_record: ns
+      ns_regexes:
+        - '(^|\.)[a-z0-9-]+\.ns\.cloudflare\.com\.?$'
+        - '(^|\.)[a-z0-9-]+\.foundationdns\.(com|net|org)\.?$'
+    extraction:
+      type: none
+    delegation:
+      method: parent-delegation-with-missing-zone
+      classify_as: likely-orphaned-cloudflare-delegation
+      require_parent_ns_delegation: true
+      require_authoritative_soa: true
+      authoritative_rcodes:
+        - nxdomain
+        - servfail
+        - refused
+        - noerror
+      direct_ns_validation: true
+      max_parent_walk: 2
+    notes: "Cloudflare documents that pending zones can respond on assigned nameservers and that zone holds are needed to prevent domains from being added in other accounts, so orphaned delegations should be treated as manual-validation candidates."
