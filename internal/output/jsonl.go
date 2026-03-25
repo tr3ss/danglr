@@ -11,10 +11,17 @@ type Writer interface {
 	Close() error
 }
 
+type DiscardWriter struct{}
+
 type JSONLWriter struct {
 	mu   sync.Mutex
 	file *os.File
 	enc  *json.Encoder
+}
+
+type StdoutWriter struct {
+	mu  sync.Mutex
+	enc *json.Encoder
 }
 
 func NewJSONLWriter(path string) (*JSONLWriter, error) {
@@ -25,6 +32,34 @@ func NewJSONLWriter(path string) (*JSONLWriter, error) {
 	enc := json.NewEncoder(f)
 	enc.SetEscapeHTML(false)
 	return &JSONLWriter{file: f, enc: enc}, nil
+}
+
+func NewStdoutWriter() *StdoutWriter {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	return &StdoutWriter{enc: enc}
+}
+
+func NewDiscardWriter() *DiscardWriter {
+	return &DiscardWriter{}
+}
+
+func (w *DiscardWriter) Write(v any) error {
+	return nil
+}
+
+func (w *DiscardWriter) Close() error {
+	return nil
+}
+
+func (w *StdoutWriter) Write(v any) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.enc.Encode(v)
+}
+
+func (w *StdoutWriter) Close() error {
+	return nil
 }
 
 func (w *JSONLWriter) Write(v any) error {

@@ -95,6 +95,12 @@ Delegation findings also go to `findings.jsonl`.
 
 The CLI also prints a concise summary to stdout.
 
+If you only want unprotected `txt-protection` results, use `-unprotected-only`. In that mode, `danglr` writes only the `unprotected` JSONL stream and discards `protected`, `findings`, and `errors` files.
+
+If you only want generalized findings, use `-findings-only`. In that mode, `danglr` writes only the `findings` JSONL stream and discards `protected`, `unprotected`, and `errors` files.
+
+If you want a single-stream JSONL result on stdout, combine `-stdout` with either `-unprotected-only` or `-findings-only`, and also pass `-no-summary` so stdout remains valid JSONL.
+
 ## Example Output
 
 Example `protected.jsonl` record:
@@ -315,6 +321,10 @@ High-throughput example:
 - `-unprotected-out`
 - `-findings-out`
 - `-errors-out`
+- `-unprotected-only`
+- `-findings-only`
+- `-stdout`
+- `-no-summary`
 - `-json-summary`
 - `-verbose`
 

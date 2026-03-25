@@ -39,6 +39,10 @@ type cliConfig struct {
 	unprotectedOut         string
 	findingsOut            string
 	errorsOut              string
+	unprotectedOnly        bool
+	findingsOnly           bool
+	stdout                 bool
+	noSummary              bool
 	jsonSummary            bool
 	verbose                bool
 }
@@ -56,6 +60,10 @@ func main() {
 }
 
 func run(ctx context.Context, cfg cliConfig) error {
+	if err := validateOutputMode(cfg); err != nil {
+		return err
+	}
+
 	root, err := config.LoadProviders(cfg.providersConfigPath, cfg.strictConfig)
 	if err != nil {
 		return fmt.Errorf("load providers config: %w", err)
@@ -130,27 +138,9 @@ func run(ctx context.Context, cfg cliConfig) error {
 		}
 	}
 
-	protectedWriter, err := output.NewJSONLWriter(cfg.protectedOut)
+	protectedWriter, unprotectedWriter, findingsWriter, errorsWriter, err := openOutputWriters(cfg)
 	if err != nil {
-		return fmt.Errorf("open protected output: %w", err)
-	}
-	unprotectedWriter, err := output.NewJSONLWriter(cfg.unprotectedOut)
-	if err != nil {
-		_ = protectedWriter.Close()
-		return fmt.Errorf("open unprotected output: %w", err)
-	}
-	findingsWriter, err := output.NewJSONLWriter(cfg.findingsOut)
-	if err != nil {
-		_ = protectedWriter.Close()
-		_ = unprotectedWriter.Close()
-		return fmt.Errorf("open findings output: %w", err)
-	}
-	errorsWriter, err := output.NewJSONLWriter(cfg.errorsOut)
-	if err != nil {
-		_ = protectedWriter.Close()
-		_ = unprotectedWriter.Close()
-		_ = findingsWriter.Close()
-		return fmt.Errorf("open errors output: %w", err)
+		return err
 	}
 
 	var logger *log.Logger
@@ -166,7 +156,9 @@ func run(ctx context.Context, cfg cliConfig) error {
 	defer scanEngine.Close()
 
 	summary, err := scanEngine.Run(ctx, inputFile)
-	printSummary(summary, cfg.jsonSummary)
+	if !cfg.noSummary {
+		printSummary(summary, cfg.jsonSummary)
+	}
 
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -201,6 +193,10 @@ func parseFlags() cliConfig {
 	flag.StringVar(&cfg.unprotectedOut, "unprotected-out", "unprotected.jsonl", "Path to the unprotected JSONL output file.")
 	flag.StringVar(&cfg.findingsOut, "findings-out", "findings.jsonl", "Path to the generalized findings JSONL output file.")
 	flag.StringVar(&cfg.errorsOut, "errors-out", "errors.jsonl", "Path to the errors JSONL output file.")
+	flag.BoolVar(&cfg.unprotectedOnly, "unprotected-only", false, "Write only unprotected JSONL records and discard protected, findings, and errors output files.")
+	flag.BoolVar(&cfg.findingsOnly, "findings-only", false, "Write only findings JSONL records and discard protected, unprotected, and errors output files.")
+	flag.BoolVar(&cfg.stdout, "stdout", false, "Write the selected single-stream output to stdout instead of a file. Use with -unprotected-only or -findings-only.")
+	flag.BoolVar(&cfg.noSummary, "no-summary", false, "Suppress the final summary output.")
 	flag.BoolVar(&cfg.jsonSummary, "json-summary", false, "Print the final summary as JSON instead of text.")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "Enable verbose progress logging to stderr.")
 
@@ -214,7 +210,9 @@ func parseFlags() cliConfig {
 		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -input hosts.txt\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -input hosts.txt -provider github-pages,azure-app-service\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -input hosts.txt -providers-config providers.yaml -resolvers resolvers.txt -untrusted-resolvers untrusted-resolvers.txt -concurrency 500 -rate 2000\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -list-providers -providers-config providers.yaml\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -list-providers -providers-config providers.yaml\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -input hosts.txt -provider github-pages -unprotected-only -unprotected-out github-unprotected.jsonl\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "  danglr -input hosts.txt -findings-only -stdout -no-summary\n\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -260,4 +258,73 @@ func parseAllowlist(value string) map[string]struct{} {
 		allowlist[part] = struct{}{}
 	}
 	return allowlist
+}
+
+func openOutputWriters(cfg cliConfig) (output.Writer, output.Writer, output.Writer, output.Writer, error) {
+	discard := output.NewDiscardWriter()
+
+	if cfg.unprotectedOnly {
+		var unprotectedWriter output.Writer
+		var err error
+		if cfg.stdout {
+			unprotectedWriter = output.NewStdoutWriter()
+		} else {
+			unprotectedWriter, err = output.NewJSONLWriter(cfg.unprotectedOut)
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("open unprotected output: %w", err)
+			}
+		}
+		return discard, unprotectedWriter, discard, discard, nil
+	}
+	if cfg.findingsOnly {
+		var findingsWriter output.Writer
+		var err error
+		if cfg.stdout {
+			findingsWriter = output.NewStdoutWriter()
+		} else {
+			findingsWriter, err = output.NewJSONLWriter(cfg.findingsOut)
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("open findings output: %w", err)
+			}
+		}
+		return discard, discard, findingsWriter, discard, nil
+	}
+
+	protectedWriter, err := output.NewJSONLWriter(cfg.protectedOut)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("open protected output: %w", err)
+	}
+	unprotectedWriter, err := output.NewJSONLWriter(cfg.unprotectedOut)
+	if err != nil {
+		_ = protectedWriter.Close()
+		return nil, nil, nil, nil, fmt.Errorf("open unprotected output: %w", err)
+	}
+	findingsWriter, err := output.NewJSONLWriter(cfg.findingsOut)
+	if err != nil {
+		_ = protectedWriter.Close()
+		_ = unprotectedWriter.Close()
+		return nil, nil, nil, nil, fmt.Errorf("open findings output: %w", err)
+	}
+	errorsWriter, err := output.NewJSONLWriter(cfg.errorsOut)
+	if err != nil {
+		_ = protectedWriter.Close()
+		_ = unprotectedWriter.Close()
+		_ = findingsWriter.Close()
+		return nil, nil, nil, nil, fmt.Errorf("open errors output: %w", err)
+	}
+
+	return protectedWriter, unprotectedWriter, findingsWriter, errorsWriter, nil
+}
+
+func validateOutputMode(cfg cliConfig) error {
+	if cfg.unprotectedOnly && cfg.findingsOnly {
+		return fmt.Errorf("-unprotected-only and -findings-only are mutually exclusive")
+	}
+	if cfg.stdout && !cfg.unprotectedOnly && !cfg.findingsOnly {
+		return fmt.Errorf("-stdout requires either -unprotected-only or -findings-only")
+	}
+	if cfg.stdout && !cfg.noSummary {
+		return fmt.Errorf("-stdout requires -no-summary to keep stdout valid JSONL")
+	}
+	return nil
 }
