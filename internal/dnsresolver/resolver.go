@@ -277,12 +277,7 @@ func (r *DNSResolver) LookupNS(ctx context.Context, name string) (NSLookupResult
 		return NSLookupResult{}, err
 	}
 
-	nameservers := make([]string, 0, len(answers))
-	for _, answer := range answers {
-		if rr, ok := answer.(*dns.NS); ok {
-			nameservers = append(nameservers, normalizeName(rr.Ns))
-		}
-	}
+	nameservers := extractNameservers(name, answers)
 	sort.Strings(nameservers)
 
 	return NSLookupResult{
@@ -291,6 +286,22 @@ func (r *DNSResolver) LookupNS(ctx context.Context, name string) (NSLookupResult
 		Found:        len(nameservers) > 0,
 		ResolverUsed: resolverUsed,
 	}, nil
+}
+
+func extractNameservers(name string, answers []dns.RR) []string {
+	name = normalizeName(name)
+	nameservers := make([]string, 0, len(answers))
+	for _, answer := range answers {
+		rr, ok := answer.(*dns.NS)
+		if !ok {
+			continue
+		}
+		if normalizeName(rr.Hdr.Name) != name {
+			continue
+		}
+		nameservers = append(nameservers, normalizeName(rr.Ns))
+	}
+	return nameservers
 }
 
 func (r *DNSResolver) LookupSOA(ctx context.Context, name string) (SOALookupResult, error) {
